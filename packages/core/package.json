@@ -1,0 +1,30 @@
+{
+  "name": "@hr-kit/core",
+  "version": "0.1.0",
+  "description": "Shared Anthropic client, LLM helpers, and utilities for the HR agent kit",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@modelcontextprotocol/sdk": "^1.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.1",
+    "typescript": "^5.4.5"
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

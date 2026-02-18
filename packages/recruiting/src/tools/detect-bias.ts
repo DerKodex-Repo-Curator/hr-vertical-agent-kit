@@ -1,4 +1,5 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { toolError, toolSuccess } from "@hr-kit/core";
 import type { BiasCategory } from "../schemas.js";
 
 type Severity = "low" | "moderate" | "high";
@@ -62,42 +63,46 @@ export async function handleDetectBias(args: {
   bias_categories: BiasCategory[];
   severity_threshold: "all" | "moderate" | "high";
 }): Promise<CallToolResult> {
-  const lower = args.text.toLowerCase();
-  const minSeverityScore =
-    args.severity_threshold === "high" ? 3 : args.severity_threshold === "moderate" ? 2 : 1;
+  try {
+    const lower = args.text.toLowerCase();
+    const minSeverityScore =
+      args.severity_threshold === "high" ? 3 : args.severity_threshold === "moderate" ? 2 : 1;
 
-  const findings = BIAS_DICT.filter((entry) => {
-    if (!args.bias_categories.includes(entry.category)) return false;
-    if (severityToScore(entry.severity) < minSeverityScore) return false;
-    return lower.includes(entry.phrase.toLowerCase());
-  });
+    const findings = BIAS_DICT.filter((entry) => {
+      if (!args.bias_categories.includes(entry.category)) return false;
+      if (severityToScore(entry.severity) < minSeverityScore) return false;
+      return lower.includes(entry.phrase.toLowerCase());
+    });
 
-  let cleanVersion = args.text;
-  for (const f of findings) {
-    const re = new RegExp(f.phrase, "gi");
-    cleanVersion = cleanVersion.replace(re, f.suggested_rewrite);
+    let cleanVersion = args.text;
+    for (const f of findings) {
+      const re = new RegExp(f.phrase, "gi");
+      cleanVersion = cleanVersion.replace(re, f.suggested_rewrite);
+    }
+
+    const totalSeverityScore = findings.reduce((sum, f) => sum + severityToScore(f.severity), 0);
+    const overallBiasScore = Math.min(10, Math.round((totalSeverityScore / Math.max(1, findings.length)) * (findings.length / 2)));
+
+    const summary =
+      findings.length === 0
+        ? "No bias detected in the scanned categories."
+        : `Found ${findings.length} instance(s) of potentially biased language across ${new Set(findings.map((f) => f.category)).size} category/categories. Overall bias score: ${overallBiasScore}/10.`;
+
+    const result = {
+      overall_bias_score: overallBiasScore,
+      findings: findings.map((f) => ({
+        phrase: f.phrase,
+        category: f.category,
+        severity: f.severity,
+        explanation: f.explanation,
+        suggested_rewrite: f.suggested_rewrite,
+      })),
+      clean_version: cleanVersion,
+      summary,
+    };
+
+    return toolSuccess(result);
+  } catch (err) {
+    return toolError(`detect_bias failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-
-  const totalSeverityScore = findings.reduce((sum, f) => sum + severityToScore(f.severity), 0);
-  const overallBiasScore = Math.min(10, Math.round((totalSeverityScore / Math.max(1, findings.length)) * (findings.length / 2)));
-
-  const summary =
-    findings.length === 0
-      ? "No bias detected in the scanned categories."
-      : `Found ${findings.length} instance(s) of potentially biased language across ${new Set(findings.map((f) => f.category)).size} category/categories. Overall bias score: ${overallBiasScore}/10.`;
-
-  const result = {
-    overall_bias_score: overallBiasScore,
-    findings: findings.map((f) => ({
-      phrase: f.phrase,
-      category: f.category,
-      severity: f.severity,
-      explanation: f.explanation,
-      suggested_rewrite: f.suggested_rewrite,
-    })),
-    clean_version: cleanVersion,
-    summary,
-  };
-
-  return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 }

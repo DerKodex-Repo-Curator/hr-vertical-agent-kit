@@ -1,4 +1,5 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { toolError, toolSuccess } from "@hr-kit/core";
 
 interface WorkEntry {
   company: string;
@@ -214,51 +215,55 @@ export async function handleParseResume(args: {
   resume_text: string;
   output_format: "structured" | "summary";
 }): Promise<CallToolResult> {
-  const lines = args.resume_text.split("\n");
-  const sections = splitIntoSections(lines);
+  try {
+    const lines = args.resume_text.split("\n");
+    const sections = splitIntoSections(lines);
 
-  const headerText = (sections["header"] ?? []).join(" ");
-  const name = lines.find((l) => l.trim().length > 0 && l.trim().length < 60)?.trim() ?? "";
-  const emailMatch = EMAIL_RE.exec(args.resume_text);
-  const phoneMatch = PHONE_RE.exec(args.resume_text);
-  const linkedinMatch = LINKEDIN_RE.exec(args.resume_text);
+    const headerText = (sections["header"] ?? []).join(" ");
+    const name = lines.find((l) => l.trim().length > 0 && l.trim().length < 60)?.trim() ?? "";
+    const emailMatch = EMAIL_RE.exec(args.resume_text);
+    const phoneMatch = PHONE_RE.exec(args.resume_text);
+    const linkedinMatch = LINKEDIN_RE.exec(args.resume_text);
 
-  const workHistory = parseWorkHistory(sections["experience"] ?? []);
-  const education = parseEducation(sections["education"] ?? []);
-  const skills = parseSkills(sections["skills"] ?? []);
-  const totalYears = calcYearsFromRanges(args.resume_text);
+    const workHistory = parseWorkHistory(sections["experience"] ?? []);
+    const education = parseEducation(sections["education"] ?? []);
+    const skills = parseSkills(sections["skills"] ?? []);
+    const totalYears = calcYearsFromRanges(args.resume_text);
 
-  let fieldsFound = 0;
-  if (emailMatch) fieldsFound++;
-  if (phoneMatch) fieldsFound++;
-  if (workHistory.length > 0) fieldsFound += 2;
-  if (education.length > 0) fieldsFound++;
-  if (skills.technical.length > 0) fieldsFound++;
-  const parseConfidence = Math.min(1, fieldsFound / 6);
+    let fieldsFound = 0;
+    if (emailMatch) fieldsFound++;
+    if (phoneMatch) fieldsFound++;
+    if (workHistory.length > 0) fieldsFound += 2;
+    if (education.length > 0) fieldsFound++;
+    if (skills.technical.length > 0) fieldsFound++;
+    const parseConfidence = Math.min(1, fieldsFound / 6);
 
-  const result: ParsedResume = {
-    contact: {
-      name,
-      email: emailMatch?.[0] ?? "",
-      phone: phoneMatch?.[0] ?? "",
-      location: headerText.replace(EMAIL_RE, "").replace(PHONE_RE, "").replace(LINKEDIN_RE, "").replace(name, "").trim().split(/\s{2,}/)[1] ?? "",
-      linkedin: linkedinMatch ? `linkedin.com/in/${linkedinMatch[1] ?? ""}` : "",
-    },
-    summary: (sections["summary"] ?? []).join(" "),
-    work_history: workHistory,
-    education,
-    skills,
-    total_years_experience: totalYears,
-    parse_confidence: parseConfidence,
-  };
+    const result: ParsedResume = {
+      contact: {
+        name,
+        email: emailMatch?.[0] ?? "",
+        phone: phoneMatch?.[0] ?? "",
+        location: headerText.replace(EMAIL_RE, "").replace(PHONE_RE, "").replace(LINKEDIN_RE, "").replace(name, "").trim().split(/\s{2,}/)[1] ?? "",
+        linkedin: linkedinMatch ? `linkedin.com/in/${linkedinMatch[1] ?? ""}` : "",
+      },
+      summary: (sections["summary"] ?? []).join(" "),
+      work_history: workHistory,
+      education,
+      skills,
+      total_years_experience: totalYears,
+      parse_confidence: parseConfidence,
+    };
 
-  if (args.output_format === "summary") {
-    const summary =
-      `${result.contact.name} — ${result.total_years_experience} years experience. ` +
-      `Skills: ${result.skills.technical.slice(0, 5).join(", ")}. ` +
-      `Most recent: ${workHistory[0]?.title ?? "unknown"} at ${workHistory[0]?.company ?? "unknown"}.`;
-    return { content: [{ type: "text", text: summary }] };
+    if (args.output_format === "summary") {
+      const summary =
+        `${result.contact.name} — ${result.total_years_experience} years experience. ` +
+        `Skills: ${result.skills.technical.slice(0, 5).join(", ")}. ` +
+        `Most recent: ${workHistory[0]?.title ?? "unknown"} at ${workHistory[0]?.company ?? "unknown"}.`;
+      return toolSuccess({ summary });
+    }
+
+    return toolSuccess(result);
+  } catch (err) {
+    return toolError(`parse_resume failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-
-  return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 }

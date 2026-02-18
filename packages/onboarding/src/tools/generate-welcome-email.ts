@@ -1,93 +1,45 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { callClaudeJSON, toolError, toolSuccess, formatError } from "@hr-kit/core";
 import type { EmailTone } from "../schemas.js";
 
 type EmailSection = "agenda" | "tools_setup" | "team_intro" | "culture_note" | "faq";
 
-const GREETINGS: Record<EmailTone, (name: string) => string> = {
-  warm: (name) => `Hi ${name},`,
-  professional: (name) => `Dear ${name},`,
-  casual: (name) => `Hey ${name}!`,
-};
-
-const OPENINGS: Record<EmailTone, (role: string, company: string) => string> = {
-  warm: (role, company) =>
-    `We are absolutely thrilled to have you joining us as ${role} at ${company}! Your first day is just around the corner and we can't wait to welcome you to the team.`,
-  professional: (role, company) =>
-    `On behalf of ${company}, I am pleased to welcome you to your new role as ${role}. We look forward to your contributions and hope you find this transition smooth and productive.`,
-  casual: (role, company) =>
-    `Welcome to ${company}! We're pumped you're joining as our new ${role} — it's going to be a great ride.`,
-};
-
-const CLOSINGS: Record<EmailTone, (manager: string) => string> = {
-  warm: (manager) =>
-    `We are so excited to have you on the team. Don't hesitate to reach out if you have any questions before your first day. See you soon!\n\nWarmly,\n${manager}`,
-  professional: (manager) =>
-    `Please do not hesitate to contact me with any questions prior to your start date. We look forward to welcoming you formally on your first day.\n\nBest regards,\n${manager}`,
-  casual: (manager) =>
-    `Any questions before day one? Just ping us. Can't wait to have you onboard!\n\nCheers,\n${manager}`,
-};
-
-function formatDate(isoDate: string): string {
-  const d = new Date(isoDate);
-  return d.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+interface WelcomeEmail {
+  subject_line: string;
+  email_body: string;
+  plain_text_version: string;
+  estimated_read_time_minutes: number;
 }
 
-function buildAgendaSection(startTime: string, locationOrLink: string, workMode: string): string {
-  return [
-    "## Your First Day Agenda",
-    "",
-    `- **${startTime}** — ${workMode.includes("http") ? `Join us at: ${locationOrLink}` : `Meet us at: ${locationOrLink}`}`,
-    "- **Morning** — Welcome, office/platform tour, and account setup",
-    "- **Midday** — Team lunch (virtual or in-person)",
-    "- **Afternoon** — 1:1 with your manager and team introductions",
-    "",
-  ].join("\n");
-}
+const SYSTEM = `You are an expert corporate communications specialist who writes warm, personalized
+welcome emails that make new hires feel genuinely excited and prepared.
 
-function buildToolsSection(tools: string[]): string {
-  if (tools.length === 0) return "";
-  return [
-    "## Setting Up Your Tools",
-    "",
-    "You'll receive provisioning emails for the following tools. Get them set up before Day 1 if you can:",
-    tools.map((t) => `- **${t}**`).join("\n"),
-    "",
-  ].join("\n");
-}
+Tone guide:
+- warm: genuine, human, slightly informal. Opens with enthusiasm.
+- professional: respectful, structured, formal. Clear and direct.
+- casual: startup-y, relaxed, uses contractions freely. Energetic.
 
-function buildTeamIntroSection(teamName: string, managerName: string): string {
-  return [
-    "## Your Team",
-    "",
-    `You'll be joining the **${teamName}** team, reporting directly to **${managerName}**. Expect a warm welcome from the whole group — we've been looking forward to having you!`,
-    "",
-  ].join("\n");
-}
+Sections to include when requested:
+- agenda: first day schedule with times
+- tools_setup: list of tools to set up before Day 1
+- team_intro: brief note about the team they're joining
+- culture_note: 2-3 sentences on company values/culture
+- faq: 3-4 common Day 1 questions with short answers
 
-function buildCultureSection(companyName: string, tone: EmailTone): string {
-  const snippets: Record<EmailTone, string> = {
-    warm: `At ${companyName}, we believe in open collaboration, continuous learning, and taking care of each other. Don't be shy — ask questions, share ideas, and bring your full self to work.`,
-    professional: `${companyName} values excellence, integrity, and continuous improvement. We encourage open dialogue and a growth mindset across all levels of the organization.`,
-    casual: `${companyName} is all about moving fast, learning constantly, and having fun while doing it. We're a no-ego crew — jump in, ask anything, and don't be afraid to challenge the status quo.`,
-  };
-  return ["## Our Culture", "", snippets[tone], ""].join("\n");
-}
+Rules:
+- Do NOT include salary or compensation information
+- Keep it under 400 words — scannable, not a wall of text
+- Always include first day logistics clearly
+- End with the manager's name as the sender
+- The email_body should be in Markdown
 
-function buildFaqSection(): string {
-  return [
-    "## Frequently Asked Questions",
-    "",
-    "**What should I bring / have ready on Day 1?**",
-    "Government-issued ID for identity verification, and a charged laptop if you have one.",
-    "",
-    "**Who do I contact if I have questions?**",
-    "Reach out to your manager or HR directly — we're here to help.",
-    "",
-    "**When will I get my equipment?**",
-    "IT will reach out prior to your start date. Flag any issues to HR immediately.",
-    "",
-  ].join("\n");
-}
+Return a JSON object with EXACTLY these fields:
+{
+  "subject_line": "<email subject>",
+  "email_body": "<complete email in Markdown>",
+  "plain_text_version": "<plain text version with no markdown>",
+  "estimated_read_time_minutes": <number, typically 1-3>
+}`;
 
 export async function handleGenerateWelcomeEmail(args: {
   employee_name: string;
@@ -105,69 +57,40 @@ export async function handleGenerateWelcomeEmail(args: {
   tone: EmailTone;
   company_name: string;
 }): Promise<CallToolResult> {
-  const { tone, employee_name, role_title, start_date, manager_name, team_name, company_name, include_sections, first_day_logistics } = args;
+  try {
+    const logistics = [
+      `Location/Link: ${args.first_day_logistics.location_or_link}`,
+      `Start time: ${args.first_day_logistics.start_time}`,
+      args.first_day_logistics.parking_or_access_instructions
+        ? `Access: ${args.first_day_logistics.parking_or_access_instructions}`
+        : null,
+      args.first_day_logistics.dress_code
+        ? `Dress code: ${args.first_day_logistics.dress_code}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
 
-  const formattedDate = formatDate(start_date);
-  const greeting = GREETINGS[tone](employee_name);
-  const opening = OPENINGS[tone](role_title, company_name);
-  const closing = CLOSINGS[tone](manager_name);
+    const user = `## New Hire
+Name: ${args.employee_name}
+Role: ${args.role_title}
+Start date: ${args.start_date}
+Manager: ${args.manager_name}
+Team: ${args.team_name}
+Company: ${args.company_name}
 
-  const logistics = [
-    `**Start Date:** ${formattedDate}`,
-    `**Start Time:** ${first_day_logistics.start_time}`,
-    `**Location / Link:** ${first_day_logistics.location_or_link}`,
-    first_day_logistics.parking_or_access_instructions
-      ? `**Access:** ${first_day_logistics.parking_or_access_instructions}`
-      : null,
-    first_day_logistics.dress_code ? `**Dress Code:** ${first_day_logistics.dress_code}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
+## First Day Logistics
+${logistics}
 
-  const sections: string[] = [
-    greeting,
-    "",
-    opening,
-    "",
-    "## First Day Details",
-    "",
-    logistics,
-    "",
-  ];
+## Email Parameters
+Tone: ${args.tone}
+Sections to include: ${args.include_sections.join(", ")}
 
-  if (include_sections.includes("agenda")) {
-    sections.push(buildAgendaSection(first_day_logistics.start_time, first_day_logistics.location_or_link, first_day_logistics.location_or_link));
+Write a personalized welcome email.`;
+
+    const result = await callClaudeJSON<WelcomeEmail>(SYSTEM, user, 2000);
+    return toolSuccess(result);
+  } catch (err) {
+    return toolError(formatError(err, "generate_welcome_email"));
   }
-  if (include_sections.includes("team_intro")) {
-    sections.push(buildTeamIntroSection(team_name, manager_name));
-  }
-  if (include_sections.includes("tools_setup")) {
-    sections.push(buildToolsSection([])); // Tools passed via onboarding plan
-  }
-  if (include_sections.includes("culture_note")) {
-    sections.push(buildCultureSection(company_name, tone));
-  }
-  if (include_sections.includes("faq")) {
-    sections.push(buildFaqSection());
-  }
-
-  sections.push(closing);
-
-  const body = sections.join("\n");
-  const plainText = body.replace(/#{1,6}\s*/g, "").replace(/\*\*/g, "").replace(/\*/g, "");
-  const wordCount = plainText.split(/\s+/).length;
-  const readMinutes = Math.ceil(wordCount / 200);
-
-  const subject = tone === "professional"
-    ? `Welcome to ${company_name} — Your First Day Details, ${formattedDate}`
-    : `Welcome aboard, ${employee_name}! 🎉 Your start date details inside`;
-
-  const result = {
-    subject_line: subject,
-    email_body: body,
-    plain_text_version: plainText,
-    estimated_read_time_minutes: readMinutes,
-  };
-
-  return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 }

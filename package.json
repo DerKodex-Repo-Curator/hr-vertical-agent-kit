@@ -3,20 +3,29 @@
   "version": "0.1.0",
   "description": "Open-source MCP agent templates covering the full HR lifecycle — recruiting, interviewing, onboarding",
   "private": true,
+  "type": "module",
   "workspaces": [
+    "packages/core",
     "packages/recruiting",
     "packages/interviewing",
     "packages/onboarding"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
+    "build": "npm run build -w packages/core && npm run build -w packages/recruiting && npm run build -w packages/interviewing && npm run build -w packages/onboarding",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "start:recruiting": "node packages/recruiting/dist/index.js",
     "start:interviewing": "node packages/interviewing/dist/index.js",
-    "start:onboarding": "node packages/onboarding/dist/index.js"
+    "start:onboarding": "node packages/onboarding/dist/index.js",
+    "eval:recruiting": "tsx scripts/eval-runner.ts recruiting",
+    "eval:interviewing": "tsx scripts/eval-runner.ts interviewing",
+    "eval:onboarding": "tsx scripts/eval-runner.ts onboarding",
+    "eval": "tsx scripts/eval-runner.ts all"
   },
   "devDependencies": {
     "@types/node": "^20.11.1",
+    "js-yaml": "^4.1.0",
+    "@types/js-yaml": "^4.0.9",
+    "tsx": "^4.7.1",
     "typescript": "^5.4.5"
   },
   "engines": {

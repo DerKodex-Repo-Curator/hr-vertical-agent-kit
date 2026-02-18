@@ -1,81 +1,48 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { callClaudeJSON, toolError, toolSuccess, formatError } from "@hr-kit/core";
 
 type Recommendation = "hire" | "no_hire" | "strong_hire" | "needs_more_info";
 
-const RECOMMENDATION_LABELS: Record<Recommendation, string> = {
-  strong_hire: "Strong Hire",
-  hire: "Hire",
-  needs_more_info: "Needs Additional Information",
-  no_hire: "No Hire",
-};
-
-const RECOMMENDATION_RATIONALE: Record<Recommendation, string> = {
-  strong_hire:
-    "Candidate demonstrated exceptional performance across all evaluated competencies with clear, quantified examples.",
-  hire: "Candidate met or exceeded expectations on core competencies. Minor gaps are addressable through onboarding.",
-  needs_more_info:
-    "The interview raised questions that require a follow-up conversation before a decision can be made.",
-  no_hire:
-    "Candidate did not meet the bar on critical competencies required for success in this role.",
-};
-
-function averageScore(scores: Record<string, number>): number {
-  const values = Object.values(scores);
-  if (values.length === 0) return 0;
-  return values.reduce((a, b) => a + b, 0) / values.length;
+interface StructuredFeedback {
+  summary: string;
+  strengths: string[];
+  development_areas: string[];
+  competency_scores: Record<string, number>;
+  overall_recommendation: string;
+  rationale: string;
 }
 
-function extractStrengths(notes: string, scores: Record<string, number>): string[] {
-  const strengths: string[] = [];
-  const highScoring = Object.entries(scores)
-    .filter(([, v]) => v >= 4)
-    .map(([k]) => k);
-  for (const comp of highScoring) {
-    strengths.push(`Strong performance in ${comp}`);
-  }
-  if (/quantif|metric|result|impact/i.test(notes)) {
-    strengths.push("Provided specific, quantifiable examples of impact");
-  }
-  if (/team|collaborat|partner/i.test(notes)) {
-    strengths.push("Demonstrated collaborative working style");
-  }
-  return strengths.length > 0 ? strengths : ["No specific strengths identified in notes"];
+interface FeedbackResult {
+  structured_feedback: StructuredFeedback;
+  candidate_facing_version: string | null;
+  calibration_notes: string;
 }
 
-function extractConcerns(notes: string, scores: Record<string, number>): string[] {
-  const concerns: string[] = [];
-  const lowScoring = Object.entries(scores)
-    .filter(([, v]) => v <= 2)
-    .map(([k]) => k);
-  for (const comp of lowScoring) {
-    concerns.push(`Below-bar performance in ${comp}`);
-  }
-  if (/vague|unclear|generic|didn't answer/i.test(notes)) {
-    concerns.push("Responses lacked specificity or depth");
-  }
-  if (/avoid|deflect|blame/i.test(notes)) {
-    concerns.push("Candidate appeared to avoid accountability in examples");
-  }
-  return concerns;
-}
+const SYSTEM = `You are a talent operations specialist who transforms raw interviewer notes into
+structured, fair, legally defensible hiring feedback.
 
-function candidateFacingVersion(
-  candidateName: string,
-  role: string,
-  strengths: string[],
-  concerns: string[],
-  recommendation: Recommendation
-): string {
-  const prefix = recommendation === "strong_hire" || recommendation === "hire"
-    ? `Thank you for interviewing for the ${role} role, ${candidateName}. We were impressed with your background and conversation.`
-    : `Thank you for taking the time to interview for the ${role} role, ${candidateName}. We appreciated the opportunity to learn more about your experience.`;
+Rules:
+- Only reference job-relevant competency observations — never mention protected characteristics
+- Use behavioral, evidence-based language ("Candidate described a situation where...")
+- If notes contain references to age, gender, ethnicity, family, religion, or disability, omit
+  them entirely and flag in calibration_notes that non-job-relevant content was found
+- Candidate-facing version must be warm, professional, and legally safe (no internal deliberation,
+  no scores, no comparison to other candidates)
+- overall_recommendation should be one of: "Strong Hire", "Hire", "Needs More Information", "No Hire"
 
-  const strengthsSummary = strengths.length > 0
-    ? `We were particularly impressed by your ${strengths[0]?.toLowerCase() ?? "experience"}.`
-    : "";
-
-  return `${prefix} ${strengthsSummary} Our team will be in touch with next steps.`.trim();
-}
+Return a JSON object with EXACTLY these fields:
+{
+  "structured_feedback": {
+    "summary": "<2-3 sentence executive summary for the debrief>",
+    "strengths": ["<specific behavioral strength 1>", "<strength 2>", "<strength 3>"],
+    "development_areas": ["<concern 1>", "<concern 2>"],
+    "competency_scores": {<pass through the scores_by_competency as-is>},
+    "overall_recommendation": "<Strong Hire | Hire | Needs More Information | No Hire>",
+    "rationale": "<2-3 sentence evidence-based rationale>"
+  },
+  "candidate_facing_version": "<safe message for candidate, or null if share_with_candidate=false>",
+  "calibration_notes": "<notes for the hiring committee>"
+}`;
 
 export async function handleStructureFeedback(args: {
   candidate_name: string;
@@ -85,44 +52,30 @@ export async function handleStructureFeedback(args: {
   recommendation: Recommendation;
   share_with_candidate: boolean;
 }): Promise<CallToolResult> {
-  const avg = averageScore(args.scores_by_competency);
-  const strengths = extractStrengths(args.interviewer_raw_notes, args.scores_by_competency);
-  const concerns = extractConcerns(args.interviewer_raw_notes, args.scores_by_competency);
+  try {
+    const scores = Object.values(args.scores_by_competency);
+    const avg = scores.length > 0
+      ? scores.reduce((a, b) => a + b, 0) / scores.length
+      : 0;
 
-  const summary = `${args.candidate_name} interviewed for ${args.role}. Average competency score: ${avg.toFixed(1)}/5. Recommendation: ${RECOMMENDATION_LABELS[args.recommendation]}.`;
+    const user = `## Candidate: ${args.candidate_name}
+## Role: ${args.role}
+## Interviewer Recommendation: ${args.recommendation}
+## Average Competency Score: ${avg.toFixed(1)}/5
 
-  const structured = {
-    summary,
-    strengths,
-    development_areas: concerns,
-    competency_scores: args.scores_by_competency,
-    overall_recommendation: RECOMMENDATION_LABELS[args.recommendation],
-    rationale: RECOMMENDATION_RATIONALE[args.recommendation],
-  };
+## Competency Scores
+${Object.entries(args.scores_by_competency).map(([k, v]) => `- ${k}: ${v}/5`).join("\n")}
 
-  const calibrationNotes = `Average score: ${avg.toFixed(1)}. ` +
-    (avg >= 4 ? "Calibrate against your strongest recent hires for this role." :
-      avg >= 3 ? "Meets bar but review whether gaps are critical or coachable." :
-        "Below bar — ensure the recommendation is not influenced by factors unrelated to job performance.");
+## Raw Interviewer Notes
+${args.interviewer_raw_notes}
 
-  const result: {
-    structured_feedback: typeof structured;
-    candidate_facing_version?: string;
-    calibration_notes: string;
-  } = {
-    structured_feedback: structured,
-    calibration_notes: calibrationNotes,
-  };
+## Instructions
+share_with_candidate: ${args.share_with_candidate}
+If share_with_candidate is false, set candidate_facing_version to null.`;
 
-  if (args.share_with_candidate) {
-    result.candidate_facing_version = candidateFacingVersion(
-      args.candidate_name,
-      args.role,
-      strengths,
-      concerns,
-      args.recommendation
-    );
+    const result = await callClaudeJSON<FeedbackResult>(SYSTEM, user, 2500);
+    return toolSuccess(result);
+  } catch (err) {
+    return toolError(formatError(err, "structure_feedback"));
   }
-
-  return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 }
