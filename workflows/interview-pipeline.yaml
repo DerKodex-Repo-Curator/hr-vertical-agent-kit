@@ -1,0 +1,119 @@
+id: interview-pipeline
+name: Structured Interview Pipeline
+version: "1.0"
+description: |
+  Generates a legally compliant, competency-based interview guide for a candidate,
+  then processes post-interview notes into structured feedback and a calibration-ready
+  debrief document.
+
+triggers:
+  - type: manual
+    description: "Run per candidate before each interview stage"
+
+inputs:
+  - name: candidate_name
+    type: string
+    required: true
+  - name: job_description
+    type: string
+    required: true
+  - name: candidate_resume
+    type: string
+    required: false
+    description: "Optional: resume text to tailor questions"
+  - name: interview_stage
+    type: string
+    required: true
+    enum: [phone_screen, technical, behavioral, panel, final]
+  - name: competencies
+    type: array
+    items:
+      type: string
+    required: true
+    description: "Competencies to assess, e.g. ['leadership', 'communication', 'problem-solving']"
+  - name: jurisdiction
+    type: string
+    default: "US"
+    description: "Jurisdiction for legal compliance check"
+  - name: interviewer_notes
+    type: string
+    required: false
+    description: "Raw post-interview notes (provide after interview to generate feedback)"
+  - name: competency_scores
+    type: object
+    required: false
+    description: "Competency scores after interview, e.g. { leadership: 4, communication: 3 }"
+  - name: recommendation
+    type: string
+    required: false
+    enum: [hire, no_hire, strong_hire, needs_more_info]
+
+steps:
+  # --- PRE-INTERVIEW ---
+
+  - id: generate_questions
+    name: "Generate Interview Guide"
+    server: hr-interviewing
+    tool: generate_interview_questions
+    prompt_template: prompts/interviewing/interview-question-generator.md
+    inputs:
+      job_description: "{{ inputs.job_description }}"
+      candidate_resume: "{{ inputs.candidate_resume }}"
+      interview_stage: "{{ inputs.interview_stage }}"
+      question_count: 8
+      competencies: "{{ inputs.competencies }}"
+      include_follow_ups: true
+    outputs:
+      - question_guide
+
+  - id: legal_audit
+    name: "Legal Compliance Audit"
+    server: hr-interviewing
+    tool: check_illegal_questions
+    depends_on: [generate_questions]
+    inputs:
+      questions: "{{ steps.generate_questions.outputs.question_guide.questions | map('question') }}"
+      jurisdiction: "{{ inputs.jurisdiction }}"
+    outputs:
+      - legal_audit_result
+    guard:
+      condition: "{{ steps.legal_audit.outputs.legal_audit_result.overall_risk == 'illegal' }}"
+      action: block
+      message: "One or more generated questions flagged as illegal. Review legal_audit_result and replace before proceeding."
+
+  # --- POST-INTERVIEW (conditional on interviewer_notes being provided) ---
+
+  - id: structure_feedback
+    name: "Structure Interviewer Feedback"
+    server: hr-interviewing
+    tool: structure_feedback
+    condition: "{{ inputs.interviewer_notes != null and inputs.recommendation != null }}"
+    prompt_template: prompts/interviewing/feedback-structurer.md
+    inputs:
+      candidate_name: "{{ inputs.candidate_name }}"
+      role: "{{ inputs.job_description | extract_title }}"
+      interviewer_raw_notes: "{{ inputs.interviewer_notes }}"
+      scores_by_competency: "{{ inputs.competency_scores }}"
+      recommendation: "{{ inputs.recommendation }}"
+      share_with_candidate: false
+    outputs:
+      - structured_feedback
+
+outputs:
+  - name: interview_guide
+    value: "{{ steps.generate_questions.outputs.question_guide }}"
+    description: "Full structured interview guide with questions, follow-ups, and guidance"
+  - name: legal_audit
+    value: "{{ steps.legal_audit.outputs.legal_audit_result }}"
+    description: "Legal compliance audit results for the question set"
+  - name: feedback
+    value: "{{ steps.structure_feedback.outputs.structured_feedback }}"
+    description: "Structured post-interview feedback (null if interview not yet conducted)"
+
+metadata:
+  estimated_duration_minutes: 3
+  compliance_notes:
+    - "Do not deviate from the approved question set during the interview"
+    - "Document all questions asked on the interview scorecard"
+    - "Retain interview notes and scorecards per local employment law requirements"
+  tags: [interviewing, compliance, feedback]

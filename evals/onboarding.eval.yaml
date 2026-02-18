@@ -1,0 +1,192 @@
+suite: onboarding-server-evals
+version: "1.0"
+server: hr-onboarding
+description: "Behavioral evaluation suite for the hr-onboarding MCP server"
+
+global_config:
+  timeout_seconds: 30
+  temperature: 0
+
+scenarios:
+
+  - id: create_plan_remote_senior
+    name: "Create onboarding plan for a remote senior hire"
+    tool: create_onboarding_plan
+    input:
+      employee_name: "Priya Nair"
+      role_title: "Senior Data Scientist"
+      department: "Data & Analytics"
+      start_date: "2026-03-03"
+      manager_name: "Jordan Lee"
+      employment_type: full_time
+      remote_hybrid_onsite: remote
+      team_size: 6
+      prior_experience_level: senior
+      company_tools: [Slack, Notion, Jira, Databricks, dbt, Tableau]
+      key_stakeholders: ["Head of Product", "VP Engineering", "CFO"]
+    assertions:
+      - type: json_field_present
+        field: onboarding_plan.week_1
+      - type: json_field_present
+        field: onboarding_plan.week_2
+      - type: json_field_present
+        field: onboarding_plan.week_3_4
+      - type: json_field_min_length
+        field: onboarding_plan.week_1.tasks
+        min: 4
+      - type: json_field_min_length
+        field: required_trainings
+        min: 3
+      - type: field_not_empty
+        field: buddy_system_recommendation
+      - type: field_not_empty
+        field: success_metrics
+
+  - id: create_plan_onsite_entry
+    name: "Create onboarding plan for an onsite entry-level hire"
+    tool: create_onboarding_plan
+    input:
+      employee_name: "Marcus Webb"
+      role_title: "Marketing Coordinator"
+      department: "Marketing"
+      start_date: "2026-03-10"
+      manager_name: "Sarah Kim"
+      employment_type: full_time
+      remote_hybrid_onsite: onsite
+      team_size: 12
+      prior_experience_level: entry
+      company_tools: [Slack, HubSpot, Asana, Google Workspace, Figma]
+      key_stakeholders: []
+    assertions:
+      - type: json_field_present
+        field: onboarding_plan.week_1
+      - type: json_field_min_length
+        field: required_trainings
+        min: 2
+      - type: field_not_empty
+        field: success_metrics
+
+  - id: welcome_email_warm_remote
+    name: "Generate a warm welcome email for a remote new hire"
+    tool: generate_welcome_email
+    input:
+      employee_name: "Priya"
+      role_title: "Senior Data Scientist"
+      start_date: "2026-03-03"
+      manager_name: "Jordan Lee"
+      team_name: "Data & Analytics"
+      first_day_logistics:
+        location_or_link: "https://meet.google.com/abc-defg-hij"
+        start_time: "9:00 AM PT"
+        dress_code: "No dress code — come as you are!"
+      include_sections: [agenda, team_intro, tools_setup, culture_note]
+      tone: warm
+      company_name: "Acme Corp"
+    assertions:
+      - type: field_not_empty
+        field: subject_line
+      - type: field_not_empty
+        field: email_body
+      - type: field_not_empty
+        field: plain_text_version
+      - type: json_field_range
+        field: estimated_read_time_minutes
+        min: 1
+        max: 5
+      - type: field_contains
+        field: email_body
+        contains: "Priya"
+      - type: field_contains
+        field: email_body
+        contains: "Jordan Lee"
+
+  - id: answer_policy_pto
+    name: "Answer a basic PTO policy question"
+    tool: answer_policy_question
+    input:
+      question: "How many vacation days do I get per year?"
+      response_style: friendly
+      escalate_if_uncertain: true
+    assertions:
+      - type: field_not_empty
+        field: answer
+      - type: json_field_in
+        field: confidence
+        values: [high, medium]
+      - type: field_not_empty
+        field: disclaimer
+      - type: json_field_present
+        field: escalation_flag
+
+  - id: answer_policy_harassment
+    name: "Escalate harassment report question to HR"
+    tool: answer_policy_question
+    input:
+      question: "How do I report a colleague for harassment?"
+      response_style: friendly
+      escalate_if_uncertain: true
+    assertions:
+      - type: field_not_empty
+        field: answer
+      - type: json_field_present
+        field: escalation_flag
+      - type: field_not_empty
+        field: disclaimer
+
+  - id: answer_policy_with_documents
+    name: "Use provided policy documents to ground the answer"
+    tool: answer_policy_question
+    input:
+      question: "How do I submit an expense report?"
+      policy_documents:
+        - |
+          EXPENSE REIMBURSEMENT POLICY
+          Employees must submit all business expenses within 30 days of incurrence
+          using the Concur expense management system. Receipts are required for any
+          single expense over $25. Manager approval is required before booking
+          any travel. Alcohol is not reimbursable unless pre-approved by a VP or above.
+      response_style: bullet_points
+      escalate_if_uncertain: false
+    assertions:
+      - type: field_not_empty
+        field: answer
+      - type: field_not_empty
+        field: disclaimer
+
+  - id: create_90_plan_senior
+    name: "Generate a 30-60-90 plan for a senior hire"
+    tool: create_30_60_90_plan
+    input:
+      employee_name: "Priya Nair"
+      role_title: "Senior Data Scientist"
+      department: "Data & Analytics"
+      manager_name: "Jordan Lee"
+      company_goals:
+        - "Reduce customer churn by 15% by end of year"
+        - "Launch ML-powered product recommendations in Q2"
+      team_priorities:
+        - "Migrate data warehouse to Databricks"
+        - "Establish experimentation framework for A/B testing"
+      role_specific_objectives:
+        - "Own the churn prediction model end-to-end"
+        - "Deliver first production ML model within 90 days"
+      prior_experience_level: senior
+      focus_areas: [learning, relationship_building, deliverables]
+    assertions:
+      - type: json_field_present
+        field: plan.days_1_30
+      - type: json_field_present
+        field: plan.days_31_60
+      - type: json_field_present
+        field: plan.days_61_90
+      - type: json_field_min_length
+        field: plan.days_1_30.goals
+        min: 2
+      - type: json_field_min_length
+        field: plan.days_1_30.milestones
+        min: 2
+      - type: field_not_empty
+        field: manager_coaching_notes
+      - type: json_field_min_length
+        field: check_in_schedule
+        min: 3

@@ -1,0 +1,167 @@
+id: new-hire-onboarding
+name: New Hire Onboarding Workflow
+version: "1.0"
+description: |
+  Complete onboarding package for a new hire: personalized welcome email,
+  structured 4-week onboarding plan, and a 30-60-90 day success plan.
+  Designed to be run by HR or the hiring manager as soon as an offer is accepted.
+
+triggers:
+  - type: manual
+    description: "Run when a candidate accepts an offer"
+  - type: webhook
+    event: offer_accepted
+    description: "Triggered by ATS/HRIS when offer is accepted"
+
+inputs:
+  - name: employee_name
+    type: string
+    required: true
+  - name: role_title
+    type: string
+    required: true
+  - name: department
+    type: string
+    required: true
+  - name: start_date
+    type: string
+    required: true
+    format: "YYYY-MM-DD"
+  - name: manager_name
+    type: string
+    required: true
+  - name: team_name
+    type: string
+    required: true
+  - name: company_name
+    type: string
+    required: true
+  - name: employment_type
+    type: string
+    default: full_time
+    enum: [full_time, part_time, contractor]
+  - name: work_mode
+    type: string
+    default: hybrid
+    enum: [remote, hybrid, onsite]
+  - name: experience_level
+    type: string
+    default: mid
+    enum: [entry, mid, senior, executive]
+  - name: team_size
+    type: number
+    default: 8
+  - name: company_tools
+    type: array
+    items:
+      type: string
+    default: ["Slack", "Notion", "Jira", "Google Workspace"]
+  - name: key_stakeholders
+    type: array
+    items:
+      type: string
+    default: []
+  - name: company_goals
+    type: array
+    items:
+      type: string
+    required: true
+    description: "Top 3-5 company-level goals for the current period"
+  - name: team_priorities
+    type: array
+    items:
+      type: string
+    required: true
+    description: "Current team priorities and initiatives"
+  - name: role_objectives
+    type: array
+    items:
+      type: string
+    required: true
+    description: "Specific success objectives for this role"
+  - name: first_day_location_or_link
+    type: string
+    required: true
+    description: "Office address or video call link for Day 1"
+  - name: first_day_start_time
+    type: string
+    default: "9:00 AM"
+
+steps:
+  - id: welcome_email
+    name: "Generate Welcome Email"
+    server: hr-onboarding
+    tool: generate_welcome_email
+    prompt_template: prompts/onboarding/welcome-writer.md
+    inputs:
+      employee_name: "{{ inputs.employee_name }}"
+      role_title: "{{ inputs.role_title }}"
+      start_date: "{{ inputs.start_date }}"
+      manager_name: "{{ inputs.manager_name }}"
+      team_name: "{{ inputs.team_name }}"
+      company_name: "{{ inputs.company_name }}"
+      first_day_logistics:
+        location_or_link: "{{ inputs.first_day_location_or_link }}"
+        start_time: "{{ inputs.first_day_start_time }}"
+      include_sections: [agenda, team_intro, tools_setup, culture_note, faq]
+      tone: warm
+    outputs:
+      - welcome_email
+
+  - id: onboarding_plan
+    name: "Generate 4-Week Onboarding Plan"
+    server: hr-onboarding
+    tool: create_onboarding_plan
+    prompt_template: prompts/onboarding/onboarding-coordinator.md
+    inputs:
+      employee_name: "{{ inputs.employee_name }}"
+      role_title: "{{ inputs.role_title }}"
+      department: "{{ inputs.department }}"
+      start_date: "{{ inputs.start_date }}"
+      manager_name: "{{ inputs.manager_name }}"
+      employment_type: "{{ inputs.employment_type }}"
+      remote_hybrid_onsite: "{{ inputs.work_mode }}"
+      team_size: "{{ inputs.team_size }}"
+      prior_experience_level: "{{ inputs.experience_level }}"
+      company_tools: "{{ inputs.company_tools }}"
+      key_stakeholders: "{{ inputs.key_stakeholders }}"
+    outputs:
+      - onboarding_plan
+
+  - id: success_plan
+    name: "Generate 30-60-90 Day Success Plan"
+    server: hr-onboarding
+    tool: create_30_60_90_plan
+    inputs:
+      employee_name: "{{ inputs.employee_name }}"
+      role_title: "{{ inputs.role_title }}"
+      department: "{{ inputs.department }}"
+      manager_name: "{{ inputs.manager_name }}"
+      company_goals: "{{ inputs.company_goals }}"
+      team_priorities: "{{ inputs.team_priorities }}"
+      role_specific_objectives: "{{ inputs.role_objectives }}"
+      prior_experience_level: "{{ inputs.experience_level }}"
+      focus_areas: [learning, relationship_building, deliverables]
+    outputs:
+      - success_plan
+
+outputs:
+  - name: welcome_email
+    value: "{{ steps.welcome_email.outputs.welcome_email }}"
+    description: "Personalized welcome email — review logistics before sending"
+  - name: onboarding_plan
+    value: "{{ steps.onboarding_plan.outputs.onboarding_plan }}"
+    description: "4-week structured onboarding plan for manager/HR use"
+  - name: success_plan
+    value: "{{ steps.success_plan.outputs.success_plan }}"
+    description: "30-60-90 day plan — share with employee in Week 1"
+
+metadata:
+  estimated_duration_minutes: 2
+  human_review_required: true
+  review_checklist:
+    - "Verify all dates and logistics in welcome email before sending"
+    - "Confirm onboarding plan with hiring manager"
+    - "Share 30-60-90 plan in first 1:1 between manager and new hire"
+    - "Queue all required trainings in LMS before start date"
+  tags: [onboarding, new-hire, day-1]

@@ -1,0 +1,223 @@
+suite: recruiting-server-evals
+version: "1.0"
+server: hr-recruiting
+description: "Behavioral evaluation suite for the hr-recruiting MCP server"
+
+global_config:
+  timeout_seconds: 30
+  temperature: 0
+
+scenarios:
+
+  - id: parse_resume_well_formed
+    name: "Parse a well-formed software engineer resume"
+    tool: parse_resume
+    input:
+      resume_text: |
+        Jane Smith
+        jane.smith@email.com | (555) 123-4567 | San Francisco, CA
+        linkedin.com/in/janesmith
+
+        SUMMARY
+        Full-stack engineer with 7 years building scalable distributed systems.
+
+        EXPERIENCE
+        Senior Software Engineer, Acme Corp (Jan 2020 - Present)
+        - Led migration from monolith to microservices, reducing p99 latency by 40%
+        - Mentored a team of 5 engineers across two time zones
+
+        Software Engineer, Startup Inc (Mar 2017 - Dec 2019)
+        - Built REST APIs in Python/Django serving 2M daily requests
+
+        EDUCATION
+        BS Computer Science, UC Berkeley, 2017
+
+        SKILLS
+        Python, Go, Kubernetes, PostgreSQL, Redis, leadership, communication
+      output_format: structured
+    assertions:
+      - type: json_field_present
+        field: contact.name
+      - type: json_field_present
+        field: contact.email
+      - type: json_field_min_length
+        field: work_history
+        min: 2
+      - type: json_field_present
+        field: total_years_experience
+      - type: json_field_range
+        field: parse_confidence
+        min: 0.5
+        max: 1.0
+      - type: field_not_empty
+        field: skills.technical
+
+  - id: parse_resume_minimal
+    name: "Parse a sparse resume gracefully"
+    tool: parse_resume
+    input:
+      resume_text: |
+        John Doe
+        john@example.com
+        Software Developer with 3 years of experience in JavaScript and React.
+      output_format: structured
+    assertions:
+      - type: json_field_present
+        field: contact.name
+      - type: json_field_present
+        field: contact.email
+      - type: json_field_range
+        field: parse_confidence
+        min: 0.0
+        max: 0.7
+
+  - id: detect_bias_gendered_language
+    name: "Detect gendered language in job description"
+    tool: detect_bias
+    input:
+      text: |
+        We're looking for a rockstar ninja developer who can dominate the competition.
+        The ideal candidate is aggressive in pursuit of goals and has a strong handshake.
+        He will lead a team of talented engineers.
+      bias_categories: [gender, age, race]
+      severity_threshold: all
+    assertions:
+      - type: json_field_min_length
+        field: findings
+        min: 2
+      - type: json_field_range
+        field: overall_bias_score
+        min: 3
+        max: 10
+      - type: field_not_empty
+        field: clean_version
+      - type: field_not_empty
+        field: summary
+
+  - id: detect_bias_clean_text
+    name: "Report no bias in inclusive job description"
+    tool: detect_bias
+    input:
+      text: |
+        We are looking for an experienced software engineer to join our team.
+        The ideal candidate brings strong technical skills and a collaborative spirit.
+        They will work closely with product and design to build customer-facing features.
+        We are an equal opportunity employer and welcome applicants of all backgrounds.
+      bias_categories: [gender, age, race, disability]
+      severity_threshold: all
+    assertions:
+      - type: json_field_range
+        field: overall_bias_score
+        min: 0
+        max: 3
+      - type: field_not_empty
+        field: clean_version
+
+  - id: score_candidate_strong_match
+    name: "Score a candidate who meets all must-have criteria"
+    tool: score_candidate
+    input:
+      candidate_profile: |
+        10 years of Python experience. Led teams of 8+. MS in Computer Science.
+        Deep expertise in Kubernetes and distributed systems. Published 3 technical papers.
+        5 years at FAANG-level companies.
+      job_description: |
+        Senior Python Engineer. Requirements: 5+ years Python, Kubernetes experience.
+        Nice to have: distributed systems, team leadership, MS degree.
+      scoring_rubric:
+        must_have_skills: [Python, Kubernetes]
+        nice_to_have_skills: [distributed systems, team leadership]
+        min_years_experience: 5
+        education_requirement: masters
+      weights:
+        skills: 0.4
+        experience: 0.4
+        education: 0.2
+    assertions:
+      - type: json_field_range
+        field: overall_score
+        min: 70
+        max: 100
+      - type: json_field_in
+        field: recommendation
+        values: [strong_yes, yes]
+      - type: field_not_empty
+        field: reasoning
+
+  - id: score_candidate_weak_match
+    name: "Score a candidate who is missing critical qualifications"
+    tool: score_candidate
+    input:
+      candidate_profile: |
+        2 years experience, mostly JavaScript. No cloud or container experience.
+        BS in Marketing. No Python mentioned.
+      job_description: |
+        Senior Python Engineer. Requires: 5+ years Python, Kubernetes.
+      scoring_rubric:
+        must_have_skills: [Python, Kubernetes]
+        nice_to_have_skills: []
+        min_years_experience: 5
+        education_requirement: none
+    assertions:
+      - type: json_field_range
+        field: overall_score
+        min: 0
+        max: 45
+      - type: json_field_in
+        field: recommendation
+        values: [no, maybe]
+      - type: json_field_min_length
+        field: missing_must_haves
+        min: 1
+
+  - id: generate_jd_includes_dei
+    name: "Generated JD includes DEI statement when requested"
+    tool: generate_job_description
+    input:
+      role_title: "Product Manager"
+      department: "Product"
+      responsibilities:
+        - "Define product roadmap and vision aligned to company strategy"
+        - "Collaborate with engineering, design, and data to ship features"
+        - "Own core product metrics and communicate progress to leadership"
+      required_qualifications:
+        - "3+ years product management experience"
+        - "Strong analytical and communication skills"
+      tone: conversational
+      include_dei_statement: true
+    assertions:
+      - type: field_not_empty
+        field: sections.dei_statement
+      - type: field_contains
+        field: full_description
+        contains: "equal opportunity"
+        case_insensitive: true
+      - type: json_field_range
+        field: character_count
+        min: 400
+        max: 6000
+      - type: json_field_present
+        field: title
+
+  - id: generate_jd_no_dei
+    name: "Generated JD omits DEI statement when opted out"
+    tool: generate_job_description
+    input:
+      role_title: "Data Analyst"
+      department: "Analytics"
+      responsibilities:
+        - "Build dashboards and reports for business stakeholders"
+        - "Clean and analyze large datasets"
+        - "Support A/B testing and experimentation"
+      required_qualifications:
+        - "2+ years data analysis experience"
+        - "Proficiency in SQL and Python"
+      tone: formal
+      include_dei_statement: false
+    assertions:
+      - type: json_field_present
+        field: title
+      - type: json_field_range
+        field: character_count
+        min: 200
+        max: 4000

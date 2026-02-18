@@ -1,0 +1,25 @@
+{
+  "name": "hr-vertical-agent-kit",
+  "version": "0.1.0",
+  "description": "Open-source MCP agent templates covering the full HR lifecycle — recruiting, interviewing, onboarding",
+  "private": true,
+  "workspaces": [
+    "packages/recruiting",
+    "packages/interviewing",
+    "packages/onboarding"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "start:recruiting": "node packages/recruiting/dist/index.js",
+    "start:interviewing": "node packages/interviewing/dist/index.js",
+    "start:onboarding": "node packages/onboarding/dist/index.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.1",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

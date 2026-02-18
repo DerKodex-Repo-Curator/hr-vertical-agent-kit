@@ -1,0 +1,128 @@
+id: resume-screening-pipeline
+name: Resume Screening Pipeline
+version: "1.0"
+description: |
+  End-to-end pipeline for screening inbound resumes against a job description.
+  Produces a bias-audited job description, parsed candidate profiles, scored
+  shortlist ranked by overall fit, and a bias-free hiring brief.
+
+triggers:
+  - type: manual
+    description: "Run per job opening when resumes are ready to screen"
+  - type: webhook
+    event: new_application_batch
+    description: "Triggered by ATS when a new batch of applications arrives"
+
+inputs:
+  - name: job_description
+    type: string
+    required: true
+    description: "Full job description text"
+  - name: resumes
+    type: array
+    items:
+      type: string
+    required: true
+    description: "Array of raw resume texts (one string per candidate)"
+  - name: scoring_rubric
+    type: object
+    required: true
+    schema:
+      must_have_skills:
+        type: array
+        items: string
+      nice_to_have_skills:
+        type: array
+        items: string
+      min_years_experience:
+        type: number
+      education_requirement:
+        type: string
+        enum: [none, bachelors, masters, phd]
+    description: "Scoring criteria — confirm with hiring manager before running"
+  - name: max_shortlist
+    type: number
+    default: 10
+    description: "Maximum number of candidates to include in the final shortlist"
+
+steps:
+  - id: audit_jd
+    name: "Audit Job Description for Bias"
+    server: hr-recruiting
+    tool: detect_bias
+    prompt_template: prompts/recruiting/bias-auditor.md
+    inputs:
+      text: "{{ inputs.job_description }}"
+      bias_categories: [gender, age, race, disability, socioeconomic]
+      severity_threshold: all
+    outputs:
+      - bias_report
+    guard:
+      condition: "{{ steps.audit_jd.outputs.bias_report.overall_bias_score >= 6 }}"
+      action: warn
+      message: |
+        JD bias score is {{ steps.audit_jd.outputs.bias_report.overall_bias_score }}/10.
+        High-severity findings: {{ steps.audit_jd.outputs.bias_report.findings | select_high_severity | length }}.
+        Consider revising the JD with the clean_version before screening candidates.
+
+  - id: parse_resumes
+    name: "Parse All Resumes"
+    server: hr-recruiting
+    tool: parse_resume
+    foreach: "{{ inputs.resumes }}"
+    parallel: true
+    inputs:
+      resume_text: "{{ item }}"
+      output_format: structured
+    outputs:
+      - parsed_candidates
+
+  - id: score_candidates
+    name: "Score Each Candidate"
+    server: hr-recruiting
+    tool: score_candidate
+    depends_on: [parse_resumes]
+    foreach: "{{ steps.parse_resumes.outputs.parsed_candidates }}"
+    parallel: true
+    inputs:
+      candidate_profile: "{{ item | to_json }}"
+      job_description: "{{ inputs.job_description }}"
+      scoring_rubric: "{{ inputs.scoring_rubric }}"
+    outputs:
+      - scored_candidates
+
+  - id: shortlist
+    name: "Rank and Shortlist"
+    type: transform
+    depends_on: [score_candidates]
+    operation: sort_filter_top
+    inputs:
+      data: "{{ steps.score_candidates.outputs.scored_candidates }}"
+      sort_by: overall_score
+      order: desc
+      exclude_where:
+        field: recommendation
+        values: [no]
+      top_n: "{{ inputs.max_shortlist }}"
+    outputs:
+      - shortlist
+
+outputs:
+  - name: shortlist
+    value: "{{ steps.shortlist.outputs.shortlist }}"
+    description: "Ranked list of top candidates with scores and reasoning"
+  - name: bias_report
+    value: "{{ steps.audit_jd.outputs.bias_report }}"
+    description: "JD bias audit results"
+  - name: total_applicants
+    value: "{{ inputs.resumes | length }}"
+  - name: shortlisted_count
+    value: "{{ steps.shortlist.outputs.shortlist | length }}"
+
+metadata:
+  estimated_duration_minutes: 5
+  compliance_notes:
+    - "All scoring is advisory — final decisions require human review"
+    - "Bias detection covers Title VII and Equality Act protected categories"
+    - "Retain this pipeline's output log for 2 years per EEOC record-keeping guidance"
+  tags: [recruiting, screening, compliance]

@@ -1,0 +1,165 @@
+suite: interviewing-server-evals
+version: "1.0"
+server: hr-interviewing
+description: "Behavioral evaluation suite for the hr-interviewing MCP server"
+
+global_config:
+  timeout_seconds: 30
+  temperature: 0
+
+scenarios:
+
+  - id: generate_questions_behavioral_stage
+    name: "Generate behavioral interview questions for a senior role"
+    tool: generate_interview_questions
+    input:
+      job_description: |
+        Senior Product Manager. Responsible for product strategy, cross-functional
+        leadership, and owning key business metrics.
+      interview_stage: behavioral
+      question_count: 5
+      competencies: [leadership, communication, problem-solving]
+      include_follow_ups: true
+    assertions:
+      - type: json_field_min_length
+        field: questions
+        min: 3
+      - type: json_field_present
+        field: interview_guide_intro
+      - type: json_field_present
+        field: estimated_duration_minutes
+      - type: field_not_empty
+        field: questions[0].follow_up_probes
+
+  - id: generate_questions_phone_screen
+    name: "Generate phone screen questions (fewer, lighter)"
+    tool: generate_interview_questions
+    input:
+      job_description: "Junior Frontend Developer role at a startup."
+      interview_stage: phone_screen
+      question_count: 4
+      competencies: [communication, adaptability]
+      include_follow_ups: false
+    assertions:
+      - type: json_field_min_length
+        field: questions
+        min: 2
+      - type: json_field_present
+        field: interview_guide_intro
+
+  - id: evaluate_response_strong_star
+    name: "Score a strong STAR-format response highly"
+    tool: evaluate_response
+    input:
+      question: "Tell me about a time you led a team through a difficult challenge."
+      candidate_response: |
+        In 2022, I was leading a team of 6 engineers when our main data pipeline failed
+        two weeks before a major product launch. My task was to restore data integrity
+        while keeping the launch on track. I first ran a root-cause analysis and identified
+        a schema migration bug. I then split the team: two engineers patched the pipeline
+        while I worked with the PM to descope non-critical features. As a result, we
+        launched on time and the pipeline was fully repaired with 100% data integrity
+        within 5 days. We also wrote a post-mortem that became the team's incident
+        response playbook.
+      evaluation_criteria: [leadership, problem-solving, communication]
+      interview_stage: behavioral
+      use_star_framework: true
+    assertions:
+      - type: json_field_range
+        field: score
+        min: 3
+        max: 5
+      - type: json_field_present
+        field: star_analysis
+      - type: field_not_empty
+        field: strengths
+      - type: json_field_present
+        field: notes_for_debrief
+
+  - id: evaluate_response_weak_vague
+    name: "Score a vague, non-STAR response lowly"
+    tool: evaluate_response
+    input:
+      question: "Tell me about a time you led a team through a difficult challenge."
+      candidate_response: "Yeah I've led teams before. Things were hard sometimes but we figured it out."
+      evaluation_criteria: [leadership, problem-solving]
+      interview_stage: behavioral
+      use_star_framework: true
+    assertions:
+      - type: json_field_range
+        field: score
+        min: 1
+        max: 3
+      - type: field_not_empty
+        field: gaps
+      - type: json_field_present
+        field: follow_up_recommended
+
+  - id: check_illegal_questions_direct_violations
+    name: "Flag clearly illegal questions under US law"
+    tool: check_illegal_questions
+    input:
+      questions:
+        - "Are you married?"
+        - "How old are you?"
+        - "Do you have kids?"
+        - "What country are you from?"
+        - "Have you ever been arrested?"
+      jurisdiction: US
+    assertions:
+      - type: json_field_range
+        field: flagged_count
+        min: 4
+        max: 5
+      - type: json_field_in
+        field: overall_risk
+        values: [high, illegal]
+      - type: field_not_empty
+        field: recommendation
+
+  - id: check_illegal_questions_clean_set
+    name: "Clear a compliant question set"
+    tool: check_illegal_questions
+    input:
+      questions:
+        - "Tell me about a time you led a project from start to finish."
+        - "How do you prioritize when you have competing deadlines?"
+        - "What excites you about this role and our company?"
+        - "Describe your approach to working with cross-functional teams."
+      jurisdiction: US
+    assertions:
+      - type: json_field_range
+        field: flagged_count
+        min: 0
+        max: 1
+      - type: json_field_in
+        field: overall_risk
+        values: [none, low]
+
+  - id: structure_feedback_strong_hire
+    name: "Structure feedback for a strong hire recommendation"
+    tool: structure_feedback
+    input:
+      candidate_name: "Alex Chen"
+      role: "Senior Product Manager"
+      interviewer_raw_notes: |
+        Alex gave very specific examples throughout. The story about the failed pipeline
+        and how they rallied the team was impressive. Strong STAR answers. Showed clear
+        ownership. Quantified impact throughout. Team seemed to trust them a lot based
+        on the stories. Communication was excellent — clear, concise, no rambling.
+      scores_by_competency:
+        leadership: 5
+        communication: 5
+        problem_solving: 4
+        collaboration: 4
+      recommendation: strong_hire
+      share_with_candidate: false
+    assertions:
+      - type: json_field_present
+        field: structured_feedback.summary
+      - type: field_not_empty
+        field: structured_feedback.strengths
+      - type: json_field_present
+        field: structured_feedback.overall_recommendation
+      - type: json_field_present
+        field: calibration_notes
